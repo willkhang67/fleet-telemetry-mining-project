@@ -1,0 +1,8 @@
+# solutions in ingest-worker
+dotnet new sln -n IngestWorker -o ingest-worker
+
+# create dotnet web template in ingest-worker folder
+dotnet new web -n Ingest.Worker -o ingest-worker/Ingest.Worker
+
+# add dotnet web template to ingestwork solutions (which is main solution for the whole .NET folder)
+dotnet sln ingest-worker add ingest-worker/Ingest.Worker
