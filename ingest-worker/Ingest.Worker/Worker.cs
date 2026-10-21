@@ -7,16 +7,11 @@ public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
     private readonly KafkaOptions _options;
-    private readonly IHostApplicationLifetime _lifetime;
 
-    public Worker(
-        ILogger<Worker> logger,
-        IOptions<KafkaOptions> options,
-        IHostApplicationLifetime lifetime)
+    public Worker(ILogger<Worker> logger, IOptions<KafkaOptions> options)
     {
         _logger = logger;
         _options = options.Value;
-        _lifetime = lifetime;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -29,32 +24,33 @@ public class Worker : BackgroundService
             BootstrapServers = _options.BootstrapServers,
             GroupId = _options.GroupId,
             AutoOffsetReset = AutoOffsetReset.Earliest,
-            EnableAutoCommit = false   // we commit ourselves, after handling the message
+            EnableAutoCommit = false
         };
 
         using var consumer = new ConsumerBuilder<string, string>(config).Build();
         consumer.Subscribe(_options.Topic);
         _logger.LogInformation(
-            "Subscribed to {Topic} as group {Group}, waiting for one message...",
+            "Subscribed to {Topic} as group {Group}",
             _options.Topic, _options.GroupId);
 
         try
         {
-            var result = consumer.Consume(stoppingToken);
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                var result = consumer.Consume(stoppingToken);
 
-            _logger.LogInformation(
-                "Received key={Key} partition={Partition} offset={Offset} value={Value}",
-                result.Message.Key,
-                result.Partition.Value,
-                result.Offset.Value,
-                result.Message.Value);
+                _logger.LogInformation(
+                    "Received key={Key} partition={Partition} offset={Offset}",
+                    result.Message.Key,
+                    result.Partition.Value,
+                    result.Offset.Value);
 
-            consumer.Commit(result);   // commit only after the message is handled
-            _logger.LogInformation("Committed offset {Offset}", result.Offset.Value + 1);
+                consumer.Commit(result);   // naive on purpose: one commit per message
+            }
         }
         catch (OperationCanceledException)
         {
-            _logger.LogInformation("Shutdown requested before a message arrived");
+            _logger.LogInformation("Shutdown requested");
         }
         catch (ConsumeException ex)
         {
@@ -64,7 +60,5 @@ public class Worker : BackgroundService
         {
             consumer.Close();   // leaves the group cleanly
         }
-
-        _lifetime.StopApplication();
     }
 }
