@@ -1,0 +1,81 @@
+21/10/2026:
+┌─────────────────────────────────────────────────────────────┐
+│                        Generic Host                         │
+│                                                             │
+│  ┌─────────────────┐  ┌──────────────────┐  ┌────────────┐  │
+│  │  Configuration  │  │    DI Container  │  │  Logging   │  │
+│  │   (IOptions<T>) │─▶│ (Transient/Scope/│  │            │  │
+│  │                 │  │    Singleton)    │  │            │  │
+│  └─────────────────┘  └────────┬─────────┘  └────────────┘  │
+│                                │ injects                    │
+│                                ▼                            │
+│                   ┌─────────────────────────┐               │
+│                   │    BackgroundService    │               │
+│                   │ (IHostedService worker) │               │
+│                   └─────────────────────────┘               │
+└─────────────────────────────────────────────────────────────┘
+
+- Generic Host (IHost)
+    - the runtime wrapper, encapsulating cross-cutting applicaion resources:
+        - Dependency Injection (DI),
+        - Configuration (applicaion.json, environment variables)
+        - Logging
+        - Application Lifetime Management (greaceful startup and shutdown)
+
+- Dependency Injectio in .NET:
+    - transient - AddTransient<TInterface, TImplementation>()
+        - an entirely new instance when created.
+        - stateless
+    - scoped - AddScoped<TInterface, TImplementation>()
+        - only 1 instance created for a scope (in web is an HTTP request)
+        - database context
+    - singleton - AddSingleton<TInterface, TImplementation>()
+        - only 1 spawn for an entire system lifecycle
+        - background worker
+
+- BackgroundService:
+    - long-running worker task that executes asynchronousely alongside main application without blocking incoming HTTP requests.
+
+    public class QueueProcessor : BackgroundService
+    {
+        private readonly ILogger<QueueProcessor> _logger;
+
+        public QueueProcessor(ILogger<QueueProcessor> logger)
+        {
+            _logger = logger;
+        }
+
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            // Runs in a background loop until the application receives a shutdown signal
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                _logger.LogInformation("Processing batch at: {time}", DateTimeOffset.Now);
+                await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+            }
+        }
+    }
+
+    - in program.cs
+        - builder.Services.AddHostedService<QueueProcessor>();
+
+- IOptions Configuration:
+    - Options Pattern maps structured config sections (from appsetting.json) to strongly typed C# classes.
+
+    {
+        "MiningSettings": {
+            "TargetPool": "us-east.mining.local",
+            "WorkerThreads": 8
+        }
+    }
+
+    public class MiningSettings
+{
+    public string TargetPool { get; set; } = string.Empty;
+    public int WorkerThreads { get; set; }
+}
+
+// In Program.cs:
+builder.Services.Configure<MiningSettings>(
+    builder.Configuration.GetSection("MiningSettings")
+);
