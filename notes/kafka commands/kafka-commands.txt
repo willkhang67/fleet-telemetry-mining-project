@@ -1,0 +1,190 @@
+FLEET TELEMETRY PIPELINE - KAFKA DOCKER COMMANDS
+=================================================
+
+Notes
+-----
+- Run "docker compose" commands from the project root (where docker-compose.yml lives).
+- The "kafka" helper used below is defined in kafka-shell-setup.txt.
+  Without it, replace "kafka <script>" with:
+    docker compose exec kafka /opt/kafka/bin/<script>
+- Inside the container, Kafka is reached at localhost:9092.
+- Programs on your own machine (simulator, .NET worker while debugging) use 127.0.0.1:9094.
+- Flags can change between Kafka versions. If a command fails, add --help, or list the scripts:
+    docker compose exec kafka ls /opt/kafka/bin
+
+
+1. RUN AND INSPECT THE STACK
+----------------------------
+
+# Start everything in the background
+docker compose up -d
+
+# Status of all services, including exited ones (kafka-init is meant to exit)
+docker compose ps -a
+
+# Follow the broker logs (Ctrl+C to stop following)
+docker compose logs -f kafka
+
+# See whether the topics were created
+docker compose logs kafka-init
+
+# Stop the broker but keep its data
+docker compose stop kafka
+
+# Start it again
+docker compose start kafka
+
+# Stop and start in one step
+docker compose restart kafka
+
+# Rerun the topic creation job
+docker compose run --rm kafka-init
+
+# Remove containers, keep data volumes
+docker compose down
+
+# Remove containers AND delete Kafka and TimescaleDB data (deliberate clean start only)
+docker compose down -v
+
+# Disk used by Kafka data
+docker compose exec kafka du -sh /var/lib/kafka/data
+
+
+2. TOPICS
+---------
+
+# List all topics
+kafka kafka-topics.sh --bootstrap-server localhost:9092 --list
+
+# Show partition count, leader and replicas (check telemetry has 6 partitions)
+kafka kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic telemetry
+
+# Create a topic (this is what kafka-init does)
+kafka kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic telemetry --partitions 6 --replication-factor 1
+
+# Delete a topic and its data (fine for test data, not for anything you need)
+kafka kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic telemetry
+
+# Increase partitions (you can never decrease them)
+# WARNING: this changes which partition a key maps to for new messages, which breaks
+# per-truck ordering across the change. Decide the partition count early.
+kafka kafka-topics.sh --bootstrap-server localhost:9092 --alter --topic telemetry --partitions 12
+
+
+3. TOPIC SETTINGS
+-----------------
+
+# Show topic-level settings such as retention
+kafka kafka-configs.sh --bootstrap-server localhost:9092 --entity-type topics --entity-name telemetry --describe
+
+# Keep messages for 24 hours so dev data does not pile up
+kafka kafka-configs.sh --bootstrap-server localhost:9092 --entity-type topics --entity-name telemetry --alter --add-config retention.ms=86400000
+
+
+4. LOOK AT MESSAGES
+-------------------
+
+# Read the first 5 messages and exit
+kafka kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic telemetry --from-beginning --max-messages 5
+
+# Same, but show the key (truck ID), partition and offset
+kafka kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic telemetry --from-beginning --max-messages 5 --property print.key=true --property print.partition=true --property print.offset=true
+
+# Inspect the dead-letter topic
+kafka kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic telemetry.dlq --from-beginning --property print.key=true
+
+# Read one specific partition
+kafka kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic telemetry --partition 0 --offset earliest --max-messages 5
+
+# Note: the console consumer used without --group does not commit offsets for your
+# worker's group, so it will not interfere with the worker.
+
+# Type messages by hand into the dead-letter topic (Ctrl+C to exit), useful for testing
+kafka kafka-console-producer.sh --bootstrap-server localhost:9092 --topic telemetry.dlq
+
+# Send keyed messages typed as key:value, e.g.  T001:{"truck_id":"T001"}
+kafka kafka-console-producer.sh --bootstrap-server localhost:9092 --topic telemetry --property parse.key=true --property key.separator=:
+
+
+5. COUNTING MESSAGES
+--------------------
+
+# Latest offset per partition (format topic:partition:offset) = how many messages were written
+kafka kafka-get-offsets.sh --bootstrap-server localhost:9092 --topic telemetry
+
+# Earliest offset instead (with retention, latest minus earliest = messages kept)
+kafka kafka-get-offsets.sh --bootstrap-server localhost:9092 --topic telemetry --time -2
+
+
+6. CONSUMER GROUPS (WORKER PROGRESS AND LAG)
+--------------------------------------------
+
+# List consumer groups
+kafka kafka-consumer-groups.sh --bootstrap-server localhost:9092 --list
+
+# Per-partition committed offset, log end offset and LAG (your key health number)
+# "ingest" is a placeholder; use your worker's group ID
+kafka kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group ingest
+
+# Preview rewinding the group to reprocess everything
+# (replace --dry-run with --execute to apply; stop the worker first)
+kafka kafka-consumer-groups.sh --bootstrap-server localhost:9092 --group ingest --topic telemetry --reset-offsets --to-earliest --dry-run
+
+# Delete a group (must have no active members)
+kafka kafka-consumer-groups.sh --bootstrap-server localhost:9092 --delete --group ingest
+
+
+7. BROKER HEALTH
+----------------
+
+# Check the broker answers (the compose healthcheck uses this)
+kafka kafka-broker-api-versions.sh --bootstrap-server localhost:9092
+
+# KRaft controller status
+kafka kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --status
+
+
+8. THROUGHPUT BASELINES
+-----------------------
+Use a separate topic so you do not pollute telemetry.
+
+# Create the test topic
+kafka kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic perf-test --partitions 6 --replication-factor 1
+
+# How fast the broker accepts messages on your machine (-1 = no limit)
+kafka kafka-producer-perf-test.sh --topic perf-test --num-records 100000 --record-size 300 --throughput -1 --producer-props bootstrap.servers=localhost:9092
+
+# How fast a consumer reads them
+kafka kafka-consumer-perf-test.sh --bootstrap-server localhost:9092 --topic perf-test --messages 100000
+
+# Clean up
+kafka kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic perf-test
+
+# This gives the broker's ceiling. If your pipeline is slower, the bottleneck is your
+# code or the database, not Kafka.
+
+
+9. FAILURE DRILLS (PHASE 3)
+---------------------------
+
+# Broker restart drill
+docker compose restart kafka
+
+# Freeze the database without stopping it, to test backpressure, consumer lag and recovery
+docker compose pause timescaledb
+
+# Resume it
+docker compose unpause timescaledb
+
+# Crash the worker mid-batch (only once an ingest-worker service exists in compose)
+docker compose kill ingest-worker
+
+# Duplicates, late events and malformed messages come from the simulator's fault
+# options, not from these commands.
+
+
+WHICH ONES YOU WILL USE MOST
+----------------------------
+- Day to day: ps -a, logs, --list, --describe, console consumer, kafka-get-offsets.sh
+- While building the worker: consumer-groups --describe (lag) and --reset-offsets (replaying data)
+- During drills and benchmarks: restart, pause, and the perf-test scripts

@@ -1,0 +1,64 @@
+KAFKA SHELL HELPER SETUP
+========================
+
+Why you need this
+-----------------
+The commands in kafka-commands.txt use a shorthand called "kafka". If you see:
+
+    kafka: command not found
+
+the function has not been defined in your shell yet. It only exists after you
+define it, and it disappears when you close the terminal unless you save it.
+
+
+1. DEFINE IT FOR THIS TERMINAL
+------------------------------
+It points at your compose file by full path, so it works from any folder,
+including simulator/. Paste this as one line:
+
+kafka() { docker compose -f "$HOME/A MyDoc/project/project/project/project-12-mining-project/docker-compose.yml" exec kafka /opt/kafka/bin/"$@"; }
+
+Test it:
+
+kafka kafka-topics.sh --bootstrap-server localhost:9092 --list
+
+You should see telemetry and telemetry.dlq.
+
+
+2. KEEP IT FOR EVERY NEW TERMINAL
+---------------------------------
+Append it to your shell config, then reload:
+
+cat >> ~/.bashrc <<'EOF'
+
+# Kafka CLI inside the fleet-telemetry compose stack
+kafka() { docker compose -f "$HOME/A MyDoc/project/project/project/project-12-mining-project/docker-compose.yml" exec kafka /opt/kafka/bin/"$@"; }
+EOF
+source ~/.bashrc
+
+If you use zsh instead of bash, use ~/.zshrc in both lines.
+
+If you move the repo (for example to get rid of the space in the path), update the
+path inside the function.
+
+
+3. NOTES
+--------
+- Inside this function the Kafka address is localhost:9092, because the command
+  runs inside the container. Do not use 127.0.0.1:9094 here; that address is for
+  programs on your own machine (the simulator, and the .NET worker while debugging).
+- If you pipe the output into another command (for example | grep), use
+  "docker compose exec -T" in the function, which turns off the terminal allocation.
+  For plain use, the version above is fine.
+
+
+4. WITHOUT THE HELPER
+---------------------
+Run the commands in long form from the project root:
+
+cd ..
+docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+
+If the function still gives an error, check the exact message. A "no such file"
+error means the path in the function does not match where your docker-compose.yml
+actually is.
