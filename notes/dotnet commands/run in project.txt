@@ -1,0 +1,8 @@
+# cd to project folder and run this
+dotnet run --urls http://127.0.0.1:5080
+
+# run in another terminal to track the health of the project running
+curl http://127.0.0.1:5080/health
+
+# add package + pkg name
+donet add package Confluent.Kafka
