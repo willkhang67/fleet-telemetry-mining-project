@@ -16,7 +16,7 @@ public class Worker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Consume() blocks. Yield first so the host can finish starting up.
+        // consume() blocks, Yield first so the host can finish starting up
         await Task.Yield();
 
         var config = new ConsumerConfig
@@ -24,7 +24,7 @@ public class Worker : BackgroundService
             BootstrapServers = _options.BootstrapServers,
             GroupId = _options.GroupId,
             AutoOffsetReset = AutoOffsetReset.Earliest,
-            EnableAutoCommit = false
+            EnableAutoCommit = false, // turn off auto commit
         };
 
         using var consumer = new ConsumerBuilder<string, string>(config).Build();
@@ -32,7 +32,7 @@ public class Worker : BackgroundService
         _logger.LogInformation(
             "Subscribed to {Topic} as group {Group}",
             _options.Topic, _options.GroupId);
-
+        
         try
         {
             while (!stoppingToken.IsCancellationRequested)
@@ -44,8 +44,8 @@ public class Worker : BackgroundService
                     result.Message.Key,
                     result.Partition.Value,
                     result.Offset.Value);
-
-                consumer.Commit(result);   // naive on purpose: one commit per message
+                
+                consumer.Commit(result);
             }
         }
         catch (OperationCanceledException)
@@ -58,7 +58,8 @@ public class Worker : BackgroundService
         }
         finally
         {
-            consumer.Close();   // leaves the group cleanly
+            consumer.Close(); //leaves the group cleanly
+            _logger.LogInformation("Close consumer");
         }
     }
 }
